@@ -34,6 +34,22 @@ func (v *FlexibleInt) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type FlexibleString string
+
+func (v *FlexibleString) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*v = FlexibleString(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(data, &n); err != nil {
+		return err
+	}
+	*v = FlexibleString(n.String())
+	return nil
+}
+
 type CgiDataNew struct {
 	BaseResp struct {
 		Ret         int    `json:"ret"`
@@ -577,7 +593,7 @@ type ArticleCgiData struct {
 	AdvertisementNum         int                    `json:"advertisement_num"`
 	AdvertisementInfo        []interface{}          `json:"advertisement_info"`
 	OriCreateTime            int                    `json:"ori_create_time"`
-	UserUin                  string                 `json:"user_uin"`
+	UserUin                  FlexibleString         `json:"user_uin"`
 	TotalItemNum             int                    `json:"total_item_num"`
 	IsAsync                  int                    `json:"is_async"`
 	CommentID                string                 `json:"comment_id"`
@@ -937,7 +953,7 @@ type ArticleCgiDataNew struct {
 	AdvertisementNum         int                 `json:"advertisement_num"`
 	AdvertisementInfo        []interface{}       `json:"advertisement_info"`
 	OriCreateTime            int                 `json:"ori_create_time"`
-	UserUin                  string              `json:"user_uin"`
+	UserUin                  FlexibleString      `json:"user_uin"`
 	TotalItemNum             int                 `json:"total_item_num"`
 	IsAsync                  int                 `json:"is_async"`
 	CommentID                string              `json:"comment_id"`

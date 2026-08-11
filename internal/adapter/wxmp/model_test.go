@@ -1,6 +1,7 @@
 package wxmpadapter
 
 import (
+	"encoding/json"
 	"testing"
 
 	"wx_channel/pkg/scraper/wxmp"
@@ -37,5 +38,33 @@ func TestArticleExternalIDRequiresArticleCoordinates(t *testing.T) {
 				t.Fatalf("ArticleExternalID() = %q, want empty string", got)
 			}
 		})
+	}
+}
+
+func TestBuildDownloadTaskAcceptsNumericUserUin(t *testing.T) {
+	content := json.RawMessage(`{
+		"user_name": "biz_user",
+		"user_uin": 1234567890,
+		"nick_name": "公众号作者",
+		"title": "公众号标题",
+		"desc": "公众号摘要",
+		"content_noencode": "<p>正文内容</p>",
+		"cdn_url": "https://mmbiz.qpic.cn/cover.jpg",
+		"link": "https://mp.weixin.qq.com/s/k_F-1KYn-EPy27W9VoKZng",
+		"ori_create_time": 1700000000,
+		"bizuin": "239001",
+		"mid": 2247483666,
+		"idx": 1
+	}`)
+
+	info, err := NewOfficialAccountAdapter().BuildDownloadTask(content, json.RawMessage(`{"download_dir":"/tmp","filename":"article.html"}`))
+	if err != nil {
+		t.Fatalf("BuildDownloadTask() error = %v", err)
+	}
+	if info == nil || info.Task == nil || info.Content == nil {
+		t.Fatalf("BuildDownloadTask() returned incomplete info: %+v", info)
+	}
+	if info.Task.PlatformId != PlatformID || info.Content.ExternalId != "239001_2247483666_1" {
+		t.Fatalf("unexpected task/content: task=%+v content=%+v", info.Task, info.Content)
 	}
 }
