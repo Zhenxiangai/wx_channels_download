@@ -36,9 +36,9 @@
                   "msg": "成功",
                   "data": {
                     "id": 1,
-                    "task_id": "fqG2OhiJFRYpnELqZmPRW",
+                    "task_id": "example-id",
                     "status": 4,
-                    "url": "https://finder.video.qq.com/xxx",
+                    "url": "https://example.invalid/media/example.mp4",
                     "title": "示例标题.mp4"
                   }
                 }

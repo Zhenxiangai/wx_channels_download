@@ -54,7 +54,7 @@ func fetchCertificates() ([]Certificate, error) {
 }
 
 func installCertificate(cert_data []byte) error {
-	cert_file, err := os.CreateTemp("", "SunnyRoot.cer")
+	cert_file, err := os.CreateTemp("", "wx_channels_download_root.cer")
 	if err != nil {
 		return errors.New(fmt.Sprintf("没有创建证书的权限，%v\n", err.Error()))
 	}

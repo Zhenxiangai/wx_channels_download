@@ -127,7 +127,7 @@
                   "msg": "成功",
                   "data": {
                     "message": "创建下载任务成功",
-                    "task_id": "fqG2OhiJFRYpnELqZmPRW"
+                    "task_id": "example-id"
                   }
                 }
               },

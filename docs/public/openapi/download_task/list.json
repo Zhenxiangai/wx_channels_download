@@ -45,24 +45,24 @@
                     "list": [
                       {
                         "id": 1,
-                        "task_id": "fqG2OhiJFRYpnELqZmPRW",
+                        "task_id": "example-id",
                         "type": 1,
                         "status": 4,
-                        "external_id": "14545102784038246591",
+                        "external_id": "example-id",
                         "protocol": "http",
-                        "url": "https://finder.video.qq.com/251/20302/stodownload?encfilekey=xxx&token=xxx",
+                        "url": "https://example.invalid/media/example.mp4",
                         "title": "示例标题.mp4",
-                        "cover_url": "https://wx.qlogo.cn/finder/xxx/0",
+                        "cover_url": "https://example.invalid/media/example.jpg",
                         "size": 1462345,
                         "progress": "{\"downloaded\":1462345}",
-                        "filepath": "苏苏是猪猪/示例标题.mp4",
+                        "filepath": "示例创作者/示例标题.mp4",
                         "error": "",
                         "reason": "",
                         "metadata1": "{}",
                         "metadata2": "{\"platform\":\"wx_channels\"}",
                         "idx": 0,
-                        "created_at": "1760000000000",
-                        "updated_at": "1760000001000",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:01Z",
                         "events": [
                           {
                             "id": 1,
@@ -70,7 +70,7 @@
                             "type": "started",
                             "message": "",
                             "data": "",
-                            "created_at": "1760000000000"
+                            "created_at": "2026-01-01T00:00:00Z"
                           }
                         ]
                       }

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${IMAGE:-wx_video_download:v260607}"
-WECHAT_DEB="${WECHAT_DEB:-/Users/litao/Downloads/WeChatLinux_arm64.deb}"
+WECHAT_DEB="${WECHAT_DEB:-${HOME}/Downloads/WeChatLinux_arm64.deb}"
 TARGETARCH="${TARGETARCH:-arm64}"
 PLATFORM="${PLATFORM:-linux/${TARGETARCH}}"
 GOCACHE="${GOCACHE:-/tmp/wx-go-build-cache}"
@@ -52,7 +52,6 @@ echo "Building wx_video_download for ${PLATFORM}..."
 
 cp "$ROOT_DIR/docker/webtop/Dockerfile" "$BUILD_DIR/Dockerfile"
 cp "$CONFIG_FILE" "$BUILD_DIR/config.yaml"
-cp "$ROOT_DIR/docs/public/SunnyRoot.cer" "$BUILD_DIR/SunnyRoot.cer"
 if [ -n "$GLOBAL_SCRIPT" ]; then
     cp "$GLOBAL_SCRIPT" "$BUILD_DIR/global.js"
 else

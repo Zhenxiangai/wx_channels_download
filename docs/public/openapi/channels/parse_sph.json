@@ -30,25 +30,25 @@
                   "data": {
                     "data": {
                       "authorInfo": {
-                        "nickname": "双双渔",
-                        "headImgUrl": "https://wx.qlogo.cn/finderhead/ver_1/lwqLjMoQfibLddgbvExSqISibx2Bl4Eeh2hngU5HnfoIHMTldmshjyaKE5wH3xby8MVyoa0wsk8WxlrTedw20lD9B833fiabGe94Ik0poAaJiaW6kWBqribMicnrmbiasVYbGbwo3HV93UiaDzruicviasanxYvA/0",
+                        "nickname": "示例创作者",
+                        "headImgUrl": "https://example.invalid/avatar/example.jpg",
                         "authIconUrl": ""
                       },
                       "feedInfo": {
                         "picInfo": [],
-                        "videoUrl": "https://finder.video.qq.com/251/20302/stodownload?encfilekey=xxx",
-                        "originVideoUrl": "https://finder.video.qq.com/251/20302/stodownload?encfilekey=xxx",
-                        "description": "你很臭啊\n#健身\n",
+                        "videoUrl": "https://example.invalid/media/example.mp4",
+                        "originVideoUrl": "https://example.invalid/media/example.mp4",
+                        "description": "示例内容",
                         "mediaType": 4,
                         "favCountFmt": "1091",
                         "likeCountFmt": "270",
                         "forwardCountFmt": "172",
                         "commentCountFmt": "58",
                         "h264VideoInfo": {
-                          "videoUrl": "https://finder.video.qq.com/251/20302/stodownload?encfilekey=xxx"
+                          "videoUrl": "https://example.invalid/media/example.mp4"
                         },
                         "h265VideoInfo": {
-                          "videoUrl": "https://finder.video.qq.com/251/20302/stodownload?encfilekey=xxx"
+                          "videoUrl": "https://example.invalid/media/example.mp4"
                         },
                         "createtime": 1779526800,
                         "scalingInfo": {
@@ -60,13 +60,13 @@
                           "aspectRatioExceeds169": false
                         },
                         "isHardAd": false,
-                        "coverUrl": "https://finder.video.qq.com/251/20304/stodownload?encfilekey=xxx"
+                        "coverUrl": "https://example.invalid/media/example.jpg"
                       },
                       "errMsg": {
                         "type": 0
                       },
                       "sceneInfo": {
-                        "dynamicExportId": "export/UzFfBgAAxLCCJB88bVjwjMzT4DCgIqOsVwAsEdpeW5Dq8xVYrsOgRo5Wlg",
+                    "dynamicExportId": "example-export-id",
                         "commentScene": 39,
                         "expiredTime": 1779686274,
                         "requestScene": 0,

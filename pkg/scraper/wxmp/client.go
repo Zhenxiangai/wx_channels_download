@@ -113,6 +113,7 @@ type OfficialAccountClient struct {
 	AccountIdsRefreshInterval []string
 	MaxWebsocketClients       int
 	Tokens                    []string
+	tokens_mu                 sync.RWMutex
 	Cookies                   []*http.Cookie
 	ws_clients                map[*Client]bool
 	ws_mu                     sync.RWMutex
@@ -182,7 +183,9 @@ func NewOfficialAccountClient(cfg *OfficialAccountConfig, parent_logger *zerolog
 					tokens = append(tokens, t)
 				}
 			}
+			c.tokens_mu.Lock()
 			c.Tokens = tokens
+			c.tokens_mu.Unlock()
 		}
 		read_tokens()
 		go func() {
@@ -361,7 +364,7 @@ func (c *OfficialAccountClient) HandleFetchMsgList(ctx *gin.Context) {
 	biz := ctx.Query("biz")
 	offset := ctx.Query("offset")
 	token := ctx.Query("token")
-	if valid := c.ValidateToken(token); !valid {
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
 		result.ErrCode(ctx, result.CodeTokenInvalid)
 		return
 	}
@@ -413,6 +416,11 @@ func (c *OfficialAccountClient) HandleFetchMsgList(ctx *gin.Context) {
 }
 
 func (c *OfficialAccountClient) HandleFetchArticleList(ctx *gin.Context) {
+	token := ctx.Query("token")
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
+		result.ErrCode(ctx, result.CodeTokenInvalid)
+		return
+	}
 	biz := ctx.Query("biz")
 	if biz == "" {
 		result.ErrCode(ctx, result.CodeInvalidParams)
@@ -435,7 +443,7 @@ func (c *OfficialAccountClient) HandleFetchArticleList(ctx *gin.Context) {
 // Get the list of added official accounts
 func (c *OfficialAccountClient) HandleFetchList(ctx *gin.Context) {
 	token := ctx.Query("token")
-	if valid := c.ValidateToken(token); !valid {
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
 		result.ErrCode(ctx, result.CodeTokenInvalid)
 		return
 	}
@@ -637,7 +645,7 @@ func (c *OfficialAccountClient) HandleFetchList(ctx *gin.Context) {
 
 func (c *OfficialAccountClient) HandleDelete(ctx *gin.Context) {
 	token := ctx.Query("token")
-	if token != c.RefreshToken {
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
 		result.ErrCode(ctx, result.CodeTokenInvalid)
 		return
 	}
@@ -662,7 +670,7 @@ func (c *OfficialAccountClient) HandleDelete(ctx *gin.Context) {
 // Receive refresh account credential event (assume received credentials are always up to date)
 func (c *OfficialAccountClient) HandleRefreshEvent(ctx *gin.Context) {
 	token := ctx.Query("token")
-	if token != c.RefreshToken {
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
 		result.ErrCode(ctx, result.CodeTokenInvalid)
 		return
 	}
@@ -971,19 +979,20 @@ func (c *OfficialAccountClient) HandleOfficialAccountRSS(ctx *gin.Context) {
 	need_content := ctx.Query("content")
 	need_proxy := ctx.Query("proxy")
 	only_proxy_cover := ctx.Query("proxy_cover")
+	token := ctx.Query("token")
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
+		result.ErrCode(ctx, result.CodeTokenInvalid)
+		return
+	}
+	ctx.Header("Cache-Control", "private, no-store")
 
-	cache_key := fmt.Sprintf("rss:%s:%s:%s:%s", biz, need_proxy, need_content, only_proxy_cover)
+	cache_key := fmt.Sprintf("rss:%s:%s:%s:%s:%s:%s", biz, offset, need_proxy, need_content, only_proxy_cover, token)
 	if val, found := c.cache.Get(cache_key); found {
 		if atom, ok := val.(AtomFeed); ok {
 			ctx.Header("Content-Type", "application/atom+xml; charset=utf-8")
 			ctx.XML(http.StatusOK, atom)
 			return
 		}
-	}
-	token := ctx.Query("token")
-	if valid := c.ValidateToken(token); !valid {
-		result.ErrCode(ctx, result.CodeTokenInvalid)
-		return
 	}
 	_offset, err := strconv.Atoi(offset)
 	if err != nil {
@@ -1050,14 +1059,14 @@ func (c *OfficialAccountClient) HandleOfficialAccountRSS(ctx *gin.Context) {
 	buildEntry := func(title, digest, contentURL, cover, author string, fileid int, pub_date string, authors ...string) AtomEntry {
 		u := buildURL(html.UnescapeString(contentURL))
 		if need_proxy == "1" && c.RemoteServerAddr != "" {
-			u = fmt.Sprintf("%s/mp/proxy?url=%s", c.RemoteServerAddr, url.QueryEscape(u))
+			u = official_proxy_url(c.RemoteServerAddr, u, token)
 		}
 		desc := digest
 		var thumb *MediaThumbnail
 		if cover != "" {
 			// cover = html.UnescapeString(cover)
 			if (need_proxy == "1" || only_proxy_cover == "1") && c.RemoteServerAddr != "" {
-				cover = fmt.Sprintf("%s/mp/proxy?url=%s", c.RemoteServerAddr, url.QueryEscape(cover))
+				cover = official_proxy_url(c.RemoteServerAddr, cover, token)
 			}
 			desc = fmt.Sprintf(`<img src="%s" /><br/>%s`, cover, digest)
 			thumb = &MediaThumbnail{
@@ -1192,7 +1201,7 @@ func (c *OfficialAccountClient) HandleOfficialAccountRSS(ctx *gin.Context) {
 func (c *OfficialAccountClient) HandleOfficialAccountProxy(ctx *gin.Context) {
 	targetURL := ctx.Query("url")
 	token := ctx.Query("token")
-	if valid := c.ValidateToken(token); !valid {
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
 		result.ErrCode(ctx, result.CodeTokenInvalid)
 		return
 	}
@@ -1200,15 +1209,20 @@ func (c *OfficialAccountClient) HandleOfficialAccountProxy(ctx *gin.Context) {
 		result.ErrCode(ctx, result.CodeMissingUrl)
 		return
 	}
-	// Try URL decoding first to handle double-encoded URLs
-	// if decoded, err := url.QueryUnescape(targetURL); err == nil {
-	// 	targetURL = decoded
-	// }
-	// Handle HTML entities, e.g. convert &amp; to &
 	targetURL = strings.ReplaceAll(targetURL, "&amp;", "&")
-	fmt.Println("[Proxy] Requesting:", targetURL)
+	parsed, err := url.Parse(targetURL)
+	if err != nil || !allowed_official_proxy_url(parsed) {
+		result.ErrCode(ctx, result.CodeProxyRequestErr)
+		return
+	}
+	c.logger.Info().Str("host", parsed.Hostname()).Str("path", parsed.EscapedPath()).Msg("official account proxy request")
 
-	client := &http.Client{}
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || req == nil || req.URL == nil || !allowed_official_proxy_url(req.URL) {
+			return errors.New("unsafe official account proxy redirect")
+		}
+		return nil
+	}}
 	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
 		result.ErrCode(ctx, result.CodeProxyRequestErr)
@@ -1259,12 +1273,34 @@ func (c *OfficialAccountClient) HandleOfficialAccountProxy(ctx *gin.Context) {
 		bodyString = re.ReplaceAllStringFunc(bodyString, func(match string) string {
 			// Build proxy URL
 			u := html.UnescapeString(match)
-			return fmt.Sprintf("%s/mp/proxy?url=%s", c.RemoteServerAddr, url.QueryEscape(u))
+			return stdhtml.EscapeString(official_proxy_url(c.RemoteServerAddr, u, token))
 		})
 		ctx.Writer.Write([]byte(bodyString))
 	} else {
 		_, _ = io.Copy(ctx.Writer, resp.Body)
 	}
+}
+
+func allowed_official_proxy_url(parsed *url.URL) bool {
+	if parsed == nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.User != nil {
+		return false
+	}
+	if port := parsed.Port(); port != "" && port != "443" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "mmbiz.qpic.cn" {
+		return true
+	}
+	return host == "mp.weixin.qq.com" && (parsed.Path == "/s" || strings.HasPrefix(parsed.Path, "/s/"))
+}
+
+func official_proxy_url(origin, targetURL, token string) string {
+	query := url.Values{"url": {targetURL}}
+	if token != "" {
+		query.Set("token", token)
+	}
+	return strings.TrimRight(origin, "/") + "/mp/proxy?" + query.Encode()
 }
 
 func build_official_article_request(targetURL string, acct *OfficialAccount) (*http.Request, error) {
@@ -1382,7 +1418,11 @@ func official_article_redirect_policy(req *http.Request, via []*http.Request) er
 // locally captured WeChat session. It rejects non-WeChat hosts and account
 // mismatches, and never exposes session fields in its response.
 func (c *OfficialAccountClient) HandleFetchOfficialArticle(ctx *gin.Context) {
-	if ctx == nil || !is_trusted_local_article_request(ctx.Request) {
+	if ctx == nil {
+		return
+	}
+	token := ctx.Query("token")
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) || !is_trusted_local_article_request(ctx.Request) {
 		ctx.String(http.StatusForbidden, "local access required")
 		return
 	}
@@ -1431,13 +1471,14 @@ func (c *OfficialAccountClient) HandleFetchOfficialArticle(ctx *gin.Context) {
 }
 
 func (c *OfficialAccountClient) HandleOfficialAccountManagerHome(ctx *gin.Context) {
+	token := ctx.Query("token")
+	if !c.ValidateRequestToken(token, ctx.Request.RemoteAddr) {
+		result.ErrCode(ctx, result.CodeTokenInvalid)
+		return
+	}
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	html := string(manager_html)
 	remote := c.RemoteServerAddr
-	var token string
-	if len(c.Tokens) > 0 {
-		token = c.Tokens[0]
-	}
 	html = strings.ReplaceAll(html, "%%REMOTE_SERVER%%", remote)
 	html = strings.ReplaceAll(html, "%%TOKEN%%", token)
 	html = strings.ReplaceAll(html, "%%REMOTE_MODE%%", "0")
@@ -1463,8 +1504,14 @@ func (c *OfficialAccountClient) HandleFetchOfficialAccountClients(ctx *gin.Conte
 }
 
 func (c *OfficialAccountClient) ValidateToken(t string) bool {
+	return c.validateToken(t, true)
+}
+
+func (c *OfficialAccountClient) validateToken(t string, allowEmpty bool) bool {
+	c.tokens_mu.RLock()
+	defer c.tokens_mu.RUnlock()
 	if len(c.Tokens) == 0 {
-		return true
+		return allowEmpty
 	}
 	if t == "" {
 		return false
@@ -1475,6 +1522,10 @@ func (c *OfficialAccountClient) ValidateToken(t string) bool {
 		}
 	}
 	return false
+}
+
+func (c *OfficialAccountClient) ValidateRequestToken(t, _ string) bool {
+	return c.validateToken(t, false)
 }
 
 func (c *OfficialAccountClient) Validate() error {
@@ -2857,7 +2908,7 @@ func (c *OfficialAccountClient) save_refresh_log(report *RefreshReport) {
 			return
 		}
 
-		err = os.WriteFile(fp, data, 0644)
+		err = atomic_write_owner_only(fp, data)
 		if err != nil {
 			c.logger.Error().Err(err).Msg("save refresh log: write failed")
 		}

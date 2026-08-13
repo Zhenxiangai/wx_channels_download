@@ -21,6 +21,18 @@ function apiResponse(code, msg, data, status = 200) {
   );
 }
 
+function isAllowedOfficialProxyURL(url) {
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    (!url.port || url.port === "443") &&
+    (url.hostname === "mmbiz.qpic.cn" ||
+      (url.hostname === "mp.weixin.qq.com" &&
+        (url.pathname === "/s" || url.pathname.startsWith("/s/"))))
+  );
+}
+
 const Result = {
   Ok(data = {}, msg = "") {
     return apiResponse(0, msg, data, 200);
@@ -29,36 +41,29 @@ const Result = {
     return apiResponse(code, message, {}, status);
   },
 };
-// Global cache for tokens
-const TOKEN_CACHE = new Set();
-
-// Load tokens from DB to cache
+// Load tokens from D1. Proxy access fails closed when the table is empty or unavailable.
 async function loadTokens(env) {
-  if (TOKEN_CACHE !== null) return;
-
   try {
     // Create table if not exists (in case migration didn't run)
     // In production, migrations should be run via wrangler, but for safety:
     // await env.DB.prepare(`CREATE TABLE IF NOT EXISTS tokens (token TEXT PRIMARY KEY, description TEXT, created_at INTEGER)`).run();
 
+    const tokens = new Set();
     const { results } = await env.DB.prepare("SELECT token FROM tokens").all();
     if (results && results.length > 0) {
-      results.forEach((row) => TOKEN_CACHE.add(row.token));
+      results.forEach((row) => tokens.add(row.token));
     }
-    console.log(`Loaded ${TOKEN_CACHE.size} tokens from DB`);
+    return tokens;
   } catch (error) {
     console.error("Error loading tokens:", error);
-    // Fallback to empty set if DB fails, so we don't crash, but auth might fail for DB tokens
+    return null;
   }
 }
 
 // Token validation
-function validateToken(token) {
-  if (TOKEN_CACHE.size === 0) {
-    return true;
-  }
-  if (!token) return false;
-  return TOKEN_CACHE.has(token);
+async function validateToken(token, env) {
+  const tokens = await loadTokens(env);
+  return Boolean(tokens && tokens.size > 0 && token && tokens.has(token));
 }
 
 // Fetch messages from WeChat API
@@ -118,7 +123,12 @@ async function getMsgList(account, offset = 0) {
 
 // Generate RSS feed from messages
 function generateRSS(officialAccount, messages, options = {}) {
-  const { origin, needProxy, onlyProxyCover } = options;
+  const { origin, needProxy, onlyProxyCover, token } = options;
+  const proxyURL = (targetURL) => {
+    const query = new URLSearchParams({ url: targetURL });
+    if (token) query.set("token", token);
+    return `${origin}/mp/proxy?${query.toString()}`.replace(/&/g, "&amp;");
+  };
   const now = new Date().toUTCString();
   let rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
@@ -151,12 +161,12 @@ function generateRSS(officialAccount, messages, options = {}) {
 
       let link = msg.content_url || "#";
       if (needProxy && origin && link !== "#") {
-        link = `${origin}/mp/proxy?url=${encodeURIComponent(link)}`;
+        link = proxyURL(link);
       }
 
       let cover = msg.cover;
       if (cover && (needProxy || onlyProxyCover) && origin) {
-        cover = `${origin}/mp/proxy?url=${encodeURIComponent(cover)}`;
+        cover = proxyURL(cover);
       }
 
       let description = msg.digest || "";
@@ -194,7 +204,7 @@ async function handleFetchOfficialAccountList(request, env) {
   if (pageSize > 200) pageSize = 200;
   const keyword = (url.searchParams.get("keyword") || "").trim();
 
-  if (!validateToken(token)) {
+  if (!(await validateToken(token, env))) {
     return Result.Err(1001, "Invalid token");
   }
 
@@ -248,7 +258,7 @@ async function handleFetchOfficialAccountMsgList(request, env) {
   const biz = url.searchParams.get("biz");
   const offset = parseInt(url.searchParams.get("offset") || "0");
 
-  if (!validateToken(token)) {
+  if (!(await validateToken(token, env))) {
     return Result.Err(1001, "Invalid token");
   }
 
@@ -300,7 +310,7 @@ async function handleRefreshOfficialAccountEvent(request, env) {
   const url = new URL(request.url);
   const token = url.searchParams.get("token");
 
-  if (token !== env.REFRESH_TOKEN) {
+  if (!env.REFRESH_TOKEN || !token || token !== env.REFRESH_TOKEN) {
     return Result.Err(1001, "Invalid refresh token");
   }
 
@@ -380,7 +390,7 @@ async function handleFetchMsgListOfOfficialAccountRSS(request, env) {
   const onlyProxyCover = url.searchParams.get("proxy_cover") === "1";
   const origin = url.origin;
 
-  if (!validateToken(token)) {
+  if (!(await validateToken(token, env))) {
     return Result.Err(400, "Invalid token");
   }
 
@@ -465,12 +475,13 @@ async function handleFetchMsgListOfOfficialAccountRSS(request, env) {
       origin,
       needProxy,
       onlyProxyCover,
+      token,
     });
 
     return new Response(rss, {
       headers: {
         "Content-Type": "application/rss+xml; charset=utf-8",
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (error) {
@@ -484,7 +495,7 @@ async function handleOfficialAccountProxy(request, env) {
   const targetURL = url.searchParams.get("url");
   const token = url.searchParams.get("token");
 
-  if (!validateToken(token)) {
+  if (!(await validateToken(token, env))) {
     return Result.Err(400, "Invalid token");
   }
 
@@ -495,10 +506,15 @@ async function handleOfficialAccountProxy(request, env) {
   try {
     // Decode HTML entities in URL
     const decodedURL = targetURL.replace(/&amp;/g, "&");
+    let parsedURL = new URL(decodedURL);
+    if (!isAllowedOfficialProxyURL(parsedURL)) {
+      return Result.Err(400, "Invalid proxy target");
+    }
 
     // Create proxy request
-    const proxyRequest = new Request(decodedURL, {
+    const proxyRequest = new Request(parsedURL, {
       method: "GET",
+      redirect: "manual",
       headers: {
         accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -518,7 +534,25 @@ async function handleOfficialAccountProxy(request, env) {
       },
     });
 
-    const response = await fetch(proxyRequest);
+    let response = await fetch(proxyRequest);
+    for (let redirects = 0; redirects < 5 && response.status >= 300 && response.status < 400; redirects += 1) {
+      const location = response.headers.get("Location");
+      if (!location) return Result.Err(502, "Invalid proxy redirect");
+      parsedURL = new URL(location, parsedURL);
+      if (!isAllowedOfficialProxyURL(parsedURL)) {
+        return Result.Err(400, "Invalid proxy redirect");
+      }
+      response = await fetch(
+        new Request(parsedURL, {
+          method: "GET",
+          redirect: "manual",
+          headers: proxyRequest.headers,
+        })
+      );
+    }
+    if (response.status >= 300 && response.status < 400) {
+      return Result.Err(502, "Too many proxy redirects");
+    }
 
     // Return the response with appropriate headers
     return new Response(response.body, {
@@ -563,13 +597,6 @@ async function handleAddToken(request, env) {
       .bind(token, description, now)
       .run();
 
-    // Update cache
-    if (TOKEN_CACHE === null) {
-      await loadTokens(env);
-    } else {
-      TOKEN_CACHE.add(token);
-    }
-
     return Result.Ok({ token }, "Token added successfully");
   } catch (error) {
     if (error.message && error.message.includes("UNIQUE constraint failed")) {
@@ -601,11 +628,6 @@ async function handleDeleteToken(request, env) {
     await env.DB.prepare(`DELETE FROM tokens WHERE token = ?`)
       .bind(token)
       .run();
-
-    // Update cache
-    if (TOKEN_CACHE !== null) {
-      TOKEN_CACHE.delete(token);
-    }
 
     return Result.Ok({ token }, "Token deleted successfully");
   } catch (error) {
