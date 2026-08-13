@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"net"
 	"net/http"
@@ -1318,7 +1319,12 @@ func redact_official_article_session(body []byte, acct *OfficialAccount) []byte 
 		if len(value) < 4 {
 			continue
 		}
-		redacted = bytes.ReplaceAll(redacted, []byte(value), []byte("[REDACTED]"))
+		variants := []string{value, url.QueryEscape(value), stdhtml.EscapeString(value)}
+		for _, variant := range variants {
+			if variant != "" {
+				redacted = bytes.ReplaceAll(redacted, []byte(variant), []byte("[REDACTED]"))
+			}
+		}
 	}
 	return redacted
 }
@@ -1330,6 +1336,13 @@ func is_loopback_remote_addr(remoteAddr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func is_trusted_local_article_request(request *http.Request) bool {
+	return request != nil &&
+		is_loopback_remote_addr(request.RemoteAddr) &&
+		strings.TrimSpace(request.Header.Get("Origin")) == "" &&
+		request.Header.Get("X-WXMP-Local-Client") == "1"
 }
 
 func official_article_redirect_policy(req *http.Request, via []*http.Request) error {
@@ -1356,7 +1369,7 @@ func official_article_redirect_policy(req *http.Request, via []*http.Request) er
 // locally captured WeChat session. It rejects non-WeChat hosts and account
 // mismatches, and never exposes session fields in its response.
 func (c *OfficialAccountClient) HandleFetchOfficialArticle(ctx *gin.Context) {
-	if ctx == nil || ctx.Request == nil || !is_loopback_remote_addr(ctx.Request.RemoteAddr) {
+	if ctx == nil || !is_trusted_local_article_request(ctx.Request) {
 		ctx.String(http.StatusForbidden, "local access required")
 		return
 	}

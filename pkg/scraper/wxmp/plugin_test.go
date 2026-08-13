@@ -193,12 +193,21 @@ func TestBuildOfficialArticleRequestAddsSessionWithoutChangingArticleIdentity(t 
 }
 
 func TestRedactOfficialArticleSessionRemovesCapturedValues(t *testing.T) {
-	acct := &OfficialAccount{Uin: "uin-secret", Key: "key-secret", PassTicket: "pass-secret", AppmsgToken: "token-secret", Cookie: "session=cookie-secret; other=other-secret"}
-	body := []byte(`uin-secret key-secret pass-secret token-secret cookie-secret other-secret preserved`)
+	acct := &OfficialAccount{Uin: "uin-secret", Key: "key+secret/value", PassTicket: "pass&secret", AppmsgToken: "token-secret", Cookie: "session=cookie+secret/value; other=other&secret"}
+	body := []byte(`uin-secret key+secret/value key%2Bsecret%2Fvalue pass&amp;secret pass%26secret token-secret cookie%2Bsecret%2Fvalue other&amp;secret preserved`)
 	got := redact_official_article_session(body, acct)
-	for _, secret := range []string{"uin-secret", "key-secret", "pass-secret", "token-secret", "cookie-secret", "other-secret"} {
+	for _, secret := range []string{
+		"uin-secret",
+		"key+secret/value",
+		"key%2Bsecret%2Fvalue",
+		"pass&amp;secret",
+		"pass%26secret",
+		"token-secret",
+		"cookie%2Bsecret%2Fvalue",
+		"other&amp;secret",
+	} {
 		if bytes.Contains(got, []byte(secret)) {
-			t.Fatalf("redacted body still contains captured session value")
+			t.Fatalf("redacted body still contains captured session value or encoded variant")
 		}
 	}
 	if !bytes.Contains(got, []byte("preserved")) {
@@ -246,6 +255,33 @@ func TestHandleFetchOfficialArticleRejectsNonLoopbackClient(t *testing.T) {
 	(&OfficialAccountClient{}).HandleFetchOfficialArticle(ctx)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandleFetchOfficialArticleRejectsBrowserOriginAndMissingLocalHeader(t *testing.T) {
+	for _, mutate := range []func(*http.Request){
+		func(request *http.Request) { request.Header.Set("Origin", "https://attacker.example") },
+		func(request *http.Request) {},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/mp/article/content?url=https%3A%2F%2Fmp.weixin.qq.com%2Fs%3F__biz%3Dbiz-id%26mid%3D1%26idx%3D1%26sn%3Dx", nil)
+		request.RemoteAddr = "127.0.0.1:4567"
+		mutate(request)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = request
+		(&OfficialAccountClient{}).HandleFetchOfficialArticle(ctx)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+		}
+	}
+}
+
+func TestOfficialArticleLocalRequestAllowsNonBrowserCaller(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "[::1]:4567"
+	request.Header.Set("X-WXMP-Local-Client", "1")
+	if !is_trusted_local_article_request(request) {
+		t.Fatal("trusted local non-browser request was rejected")
 	}
 }
 
