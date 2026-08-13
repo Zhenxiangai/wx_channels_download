@@ -1,6 +1,7 @@
 package wxmp
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +151,54 @@ func TestOfficialAccountClientFetchReplaysCapturedCookie(t *testing.T) {
 	response.Body.Close()
 	if seen != "session=cookie-secret" {
 		t.Fatal("Fetch() did not replay captured cookie")
+	}
+}
+
+func TestBuildOfficialArticleRequestRequiresExactHostAndMatchingBiz(t *testing.T) {
+	acct := &OfficialAccount{Biz: "biz-id", Uin: "uin-secret", Key: "key-secret", PassTicket: "pass-secret", Cookie: "session=cookie-secret"}
+	tests := []string{
+		"http://mp.weixin.qq.com/s?__biz=biz-id&mid=1&idx=1&sn=x",
+		"https://example.com/s?__biz=biz-id&mid=1&idx=1&sn=x",
+		"https://mp.weixin.qq.com.example.com/s?__biz=biz-id&mid=1&idx=1&sn=x",
+		"https://mp.weixin.qq.com/other?__biz=biz-id&mid=1&idx=1&sn=x",
+		"https://mp.weixin.qq.com/s?__biz=other-biz&mid=1&idx=1&sn=x",
+	}
+	for _, target := range tests {
+		if _, err := build_official_article_request(target, acct); err == nil {
+			t.Fatalf("build_official_article_request(%q) succeeded, want rejection", target)
+		}
+	}
+}
+
+func TestBuildOfficialArticleRequestAddsSessionWithoutChangingArticleIdentity(t *testing.T) {
+	acct := &OfficialAccount{Biz: "biz-id", Uin: "uin-secret", Key: "key-secret", PassTicket: "pass-secret", Cookie: "session=cookie-secret"}
+	req, err := build_official_article_request("https://mp.weixin.qq.com/s?__biz=biz-id&mid=article-mid&idx=2&sn=article-sn", acct)
+	if err != nil {
+		t.Fatalf("build_official_article_request() error = %v", err)
+	}
+	query := req.URL.Query()
+	if query.Get("__biz") != "biz-id" || query.Get("mid") != "article-mid" || query.Get("idx") != "2" || query.Get("sn") != "article-sn" {
+		t.Fatal("article identity changed")
+	}
+	if query.Get("uin") != "uin-secret" || query.Get("key") != "key-secret" || query.Get("pass_ticket") != "pass-secret" {
+		t.Fatal("captured session fields were not added")
+	}
+	if req.Header.Get("Cookie") != "session=cookie-secret" {
+		t.Fatal("captured Cookie was not replayed")
+	}
+}
+
+func TestRedactOfficialArticleSessionRemovesCapturedValues(t *testing.T) {
+	acct := &OfficialAccount{Uin: "uin-secret", Key: "key-secret", PassTicket: "pass-secret", AppmsgToken: "token-secret", Cookie: "session=cookie-secret; other=other-secret"}
+	body := []byte(`uin-secret key-secret pass-secret token-secret cookie-secret other-secret preserved`)
+	got := redact_official_article_session(body, acct)
+	for _, secret := range []string{"uin-secret", "key-secret", "pass-secret", "token-secret", "cookie-secret", "other-secret"} {
+		if bytes.Contains(got, []byte(secret)) {
+			t.Fatalf("redacted body still contains captured session value")
+		}
+	}
+	if !bytes.Contains(got, []byte("preserved")) {
+		t.Fatal("redaction modified unrelated content")
 	}
 }
 

@@ -46,6 +46,7 @@ func (r *Routes) RegisterRoutes(registrar RouteRegistrar) {
 	registrar.RegisterGET("/api/mp/list", r.client.HandleFetchList)
 	registrar.RegisterGET("/api/mp/msg/list", r.client.HandleFetchMsgList)
 	registrar.RegisterGET("/api/mp/article/list", r.client.HandleFetchArticleList)
+	registrar.RegisterGET("/api/mp/article/content", r.client.HandleFetchOfficialArticle)
 	registrar.RegisterGET("/api/mp/postprocess/flows", r.HandleFetchPostprocessFlows)
 	registrar.RegisterGET("/rss/mp", r.client.HandleOfficialAccountRSS)
 	registrar.RegisterGET("/mp/proxy", r.client.HandleOfficialAccountProxy)
