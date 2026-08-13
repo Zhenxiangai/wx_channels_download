@@ -1341,6 +1341,14 @@ func official_article_redirect_policy(req *http.Request, via []*http.Request) er
 		(req.URL.Path != "/s" && !strings.HasPrefix(req.URL.Path, "/s/")) {
 		return errors.New("unsafe official article redirect")
 	}
+	if len(via) == 0 || via[0] == nil || via[0].URL == nil {
+		return errors.New("official article redirect origin missing")
+	}
+	originBiz := strings.TrimSpace(via[0].URL.Query().Get("__biz"))
+	redirectBiz := strings.TrimSpace(req.URL.Query().Get("__biz"))
+	if originBiz == "" || redirectBiz == "" || originBiz != redirectBiz {
+		return errors.New("official article redirect account mismatch")
+	}
 	return nil
 }
 

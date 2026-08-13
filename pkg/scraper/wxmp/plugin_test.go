@@ -207,12 +207,13 @@ func TestRedactOfficialArticleSessionRemovesCapturedValues(t *testing.T) {
 }
 
 func TestOfficialArticleRedirectPolicyRejectsUnsafeTargets(t *testing.T) {
-	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s"}}}
+	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s", RawQuery: "__biz=biz-id"}}}
 	for _, target := range []string{
 		"http://mp.weixin.qq.com/s?__biz=biz-id",
 		"https://example.com/s?__biz=biz-id",
 		"https://mp.weixin.qq.com.example.com/s?__biz=biz-id",
 		"https://mp.weixin.qq.com/other?__biz=biz-id",
+		"https://mp.weixin.qq.com/s?__biz=other-biz",
 	} {
 		req, err := http.NewRequest(http.MethodGet, target, nil)
 		if err != nil {
@@ -226,7 +227,7 @@ func TestOfficialArticleRedirectPolicyRejectsUnsafeTargets(t *testing.T) {
 
 func TestOfficialArticleRedirectPolicyAllowsBoundedSameHostArticleRedirect(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://mp.weixin.qq.com/s/next?__biz=biz-id", nil)
-	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s"}}}
+	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s", RawQuery: "__biz=biz-id"}}}
 	if err := official_article_redirect_policy(req, via); err != nil {
 		t.Fatalf("same-host article redirect rejected: %v", err)
 	}
