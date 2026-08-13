@@ -11,7 +11,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WECHAT_BIN=/usr/bin/wechat
 
 # Copy files that rarely change and are needed by the install step
-COPY SunnyRoot.cer /usr/local/share/ca-certificates/SunnyRoot.crt
 COPY WeChatLinux_arm64.deb /tmp/WeChatLinux_arm64.deb
 
 # Expensive layer: cached as long as base image, cert, and deb don't change
@@ -62,10 +61,6 @@ RUN set -eux; \
     sed -i 's/# *zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen; \
     update-ca-certificates; \
-    mkdir -p /etc/pki/nssdb; \
-    if [ ! -f /etc/pki/nssdb/cert9.db ]; then certutil -d sql:/etc/pki/nssdb -N --empty-password; fi; \
-    certutil -d sql:/etc/pki/nssdb -D -n SunnyRoot >/dev/null 2>&1 || true; \
-    certutil -d sql:/etc/pki/nssdb -A -n SunnyRoot -t "CT,C,C" -i /usr/local/share/ca-certificates/SunnyRoot.crt; \
     rm -f /tmp/WeChatLinux_arm64.deb; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*

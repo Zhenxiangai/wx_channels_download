@@ -1,14 +1,11 @@
 package certificate
 
 import (
-	_ "embed"
+	"bytes"
+	"fmt"
+	"os"
+	"time"
 )
-
-//go:embed certs/SunnyRoot.cer
-var cert_file []byte
-
-//go:embed certs/private.key
-var private_key_file []byte
 
 type CertFileAndKeyFile struct {
 	Name       string
@@ -16,10 +13,19 @@ type CertFileAndKeyFile struct {
 	PrivateKey []byte
 }
 
-var DefaultCertFiles = &CertFileAndKeyFile{
-	Name:       "SunnyNet",
-	Cert:       cert_file,
-	PrivateKey: private_key_file,
+var DefaultCertFiles = generateDefaultCertFiles()
+
+func generateDefaultCertFiles() *CertFileAndKeyFile {
+	name := fmt.Sprintf("wx_channels_download_ephemeral_%d", os.Getpid())
+	cert, key, err := GenerateRootCA(name, 24*time.Hour)
+	if err != nil {
+		panic("generate ephemeral root certificate: " + err.Error())
+	}
+	return &CertFileAndKeyFile{
+		Name:       name,
+		Cert:       cert,
+		PrivateKey: key,
+	}
 }
 
 type CertificateSubject struct {
@@ -67,6 +73,9 @@ func CheckCertificateTrusted(cert_name string) (bool, error) {
 
 // Install a certificate
 func InstallCertificate(cert_data []byte) error {
+	if DefaultCertFiles != nil && bytes.Equal(cert_data, DefaultCertFiles.Cert) {
+		return fmt.Errorf("refusing to trust a process-local certificate; generate a machine-specific certificate first")
+	}
 	return installCertificate(cert_data)
 }
 

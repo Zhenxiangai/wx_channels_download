@@ -148,7 +148,7 @@ func (c *Interceptor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if isLocal && r.URL.Path == "/cert" {
 		w.Header().Set("Content-Type", "application/x-x509-ca-cert")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"SunnyNet.cer\"")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"wx_channels_download_root.cer\"")
 		w.Write(c.Cert.Cert)
 		return
 	}

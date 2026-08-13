@@ -34,9 +34,8 @@ func LoadCertFilesWithInfo() CertFilesInfo {
 	info := CertFilesInfo{Cert: cert}
 
 	if cert.Name == certificate.DefaultCertFiles.Name {
-		info.Source = CertSourceSunnyNet
-		info.IsLegacy = true
-		info.RiskWarnings = []string{"该证书为旧版SunnyNet证书，使用硬编码密钥对，存在安全风险，建议删除后安装本机专有证书"}
+		info.Source = CertSourceGenerated
+		info.RiskWarnings = []string{"当前为未持久化的进程级证书，启用代理前请生成本机专有证书"}
 		return info
 	}
 
@@ -71,25 +70,34 @@ type AvailableCert struct {
 }
 
 // ScanAvailableCerts returns all certificates known to the system,
-// including the built-in SunnyNet cert, mitmproxy cert (if present),
+// including the process-local ephemeral cert, mitmproxy cert (if present),
 // and the user-configured or generated cert. Exactly one cert is marked active.
 func ScanAvailableCerts() []AvailableCert {
 	active_cert := LoadCertFiles()
 	var certs []AvailableCert
 
-	// 1. SunnyNet (always available as fallback)
-	sunny_entry := AvailableCert{
+	// 1. Process-local certificate (always available as a non-persistent fallback)
+	ephemeral_entry := AvailableCert{
 		Cert:     certificate.DefaultCertFiles,
-		Source:   CertSourceSunnyNet,
-		IsLegacy: true,
+		Source:   CertSourceGenerated,
 		IsActive: active_cert.Name == certificate.DefaultCertFiles.Name,
 		RiskWarnings: []string{
-			"该证书为旧版SunnyNet证书，使用硬编码密钥对，存在安全风险，建议替换为本机生成的证书",
+			"该证书仅在当前进程内有效，启用代理前请生成本机专有证书",
 		},
 	}
-	certs = append(certs, sunny_entry)
+	certs = append(certs, ephemeral_entry)
 
-	// 2. mitmproxy (available if cert files exist on disk)
+	// Keep warning about the old public CA if it remains installed; never remove it automatically.
+	if installed, _ := certificate.CheckHasCertificate("SunnyNet"); installed {
+		certs = append(certs, AvailableCert{
+			Cert:         &certificate.CertFileAndKeyFile{Name: "SunnyNet"},
+			Source:       CertSourceSunnyNet,
+			IsLegacy:     true,
+			RiskWarnings: []string{"检测到旧版 SunnyNet 公共 CA；请确认不再使用后由用户手动卸载"},
+		})
+	}
+
+	// 3. mitmproxy (available if cert files exist on disk)
 	if mitm_cert := try_load_mitmproxy_cert(); mitm_cert != nil {
 		mitm_entry := AvailableCert{
 			Cert:     mitm_cert,
@@ -103,7 +111,7 @@ func ScanAvailableCerts() []AvailableCert {
 		certs = append(certs, mitm_entry)
 	}
 
-	// 3. Configured/generated cert (available if cert.file + cert.key are set)
+	// 4. Configured/generated cert (available if cert.file + cert.key are set)
 	if conf_cert, ok := load_configured_cert_files(); ok {
 		source := CertSourceConfigured
 		if abs_path, err := filepath.Abs(viper.GetString("cert.file")); err == nil && is_under_certs_dir(abs_path) {
@@ -111,7 +119,7 @@ func ScanAvailableCerts() []AvailableCert {
 		}
 		is_active := active_cert.Name == conf_cert.Name // compare name since object identities differ
 		// Also compare by source: only the configured/generated cert can be active
-		// when active_cert is neither SunnyNet nor mitmproxy.
+		// when active_cert is neither the process-local fallback nor mitmproxy.
 		if !is_active && active_cert.Name != certificate.DefaultCertFiles.Name && active_cert.Name != "mitmproxy" {
 			is_active = true
 		}
@@ -189,9 +197,6 @@ func LoadCertFiles() *certificate.CertFileAndKeyFile {
 	if cert, ok := load_configured_cert_files(); ok {
 		return cert
 	}
-	if mitm_cert := try_load_mitmproxy_cert(); mitm_cert != nil {
-		return mitm_cert
-	}
 	return certificate.DefaultCertFiles
 }
 
@@ -203,7 +208,7 @@ func load_configured_cert_files() (*certificate.CertFileAndKeyFile, bool) {
 			if cert_key_bytes, err2 := os.ReadFile(cert_key_file_path); err2 == nil {
 				cert_name := viper.GetString("cert.name")
 				if strings.TrimSpace(cert_name) == "" {
-					cert_name = certificate.DefaultCertFiles.Name
+					cert_name = "wx_channels_download"
 				}
 				return &certificate.CertFileAndKeyFile{
 					Name:       cert_name,

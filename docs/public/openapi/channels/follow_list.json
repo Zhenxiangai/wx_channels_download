@@ -230,19 +230,19 @@
                       },
                       "contactList": [
                         {
-                          "username": "v2_060000231003b20faec8c4e28110c3d0cd02ea31b077bfece2b1f8d12160999c471277db5802@finder",
-                          "nickname": "这是小呆鸭",
-                          "headUrl": "https://wx.qlogo.cn/finderhead/ver_1/OBy5tHHVw1j1GhdRCYFYictbUDDdTrd1rnFnLq2hYiaS9qCrTx11yOibGbzjfrXv6s513Dic9qicdmIJ7GWt6J3S6Qm7IG7SdYGPQ2MsAwDqIkF4/132",
-                          "signature": "",
+                          "username": "example_creator_1@finder",
+                          "nickname": "示例创作者",
+                          "headUrl": "https://example.invalid/avatar/example.jpg",
+                          "signature": "示例内容",
                           "followFlag": 1,
                           "followTime": 1783003479,
                           "coverImgUrl": "",
                           "spamStatus": 0,
                           "extFlag": 262148,
                           "extInfo": {
-                            "country": "CN",
-                            "province": "Zhejiang",
-                            "city": "Hangzhou"
+                            "country": "示例地区",
+                            "province": "示例地区",
+                            "city": "示例地区"
                           },
                           "liveStatus": 2,
                           "liveCoverImgUrl": "",
@@ -267,23 +267,23 @@
                           "referenceInfo": [
                             {
                               "type": 1,
-                              "name": "公众号/服务号",
+                              "name": "示例创作者",
                               "status": 1
                             },
                             {
                               "type": 2,
-                              "name": "小程序",
+                              "name": "示例创作者",
                               "status": 1
                             },
                             {
                               "type": 4,
-                              "name": "秒剪",
+                              "name": "示例创作者",
                               "status": 2
                             }
                           ]
                         }
                       ],
-                      "lastBuffer": "CP///////////wEQAA==",
+                      "lastBuffer": "",
                       "continueFlag": 0,
                       "followCount": 1
                     },

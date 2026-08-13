@@ -1,7 +1,7 @@
 # Docker image
 
-Docker 镜像包含 WeChat、SunnyRoot 系统根证书、Linux `wx_video_download` 二进制和
-自动启动脚本。
+Docker 镜像包含 WeChat、Linux `wx_video_download` 二进制和自动启动脚本。
+为避免信任公开密钥对，镜像不再预装通用根证书；启用抓取前必须生成并安装当前实例专有证书。
 
 默认发布镜像：
 
@@ -149,7 +149,7 @@ bash build/run-webtop-container.sh
 bash build/build-webtop-image.sh
 ```
 
-默认读取 `/Users/litao/Downloads/WeChatLinux_arm64.deb`。需要指定路径或镜像名时：
+默认读取 `$HOME/Downloads/WeChatLinux_arm64.deb`。需要指定路径或镜像名时：
 
 ```bash
 WECHAT_DEB=/path/to/WeChatLinux_arm64.deb \

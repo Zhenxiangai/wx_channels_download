@@ -35,7 +35,7 @@ db:
   filepath: "%CWD%/data.db"
 
 proxy:
-  enabled: true
+  enabled: false
   system: true
   hostname: "127.0.0.1"
   port: 2023
@@ -64,7 +64,7 @@ mp:
     protocol: "http"
     hostname: ""
     port: 80
-  refreshToken: "wx_channels_download"
+  refreshToken: ""
   tokenFilepath: ""
   refreshSkipMinutes: 20
   maxWebsocketClients: 5
@@ -72,7 +72,7 @@ mp:
 cloudflare:
   accountId: ""
   apiToken: ""
-  refreshToken: "wx_channels_download"
+  refreshToken: ""
   adminToken: ""
   workerName: "mp-rss-api"
   d1Name: "mp-rss-db"

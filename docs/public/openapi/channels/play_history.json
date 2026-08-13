@@ -242,22 +242,22 @@
                       },
                       "objects": [
                         {
-                          "id": "14975583782529927706",
+                          "id": "example-id",
                           "contact": {
-                            "username": "v2_060000231003b20faec8c7e68d1dc1d2c907e431b0772a75256252d6e2fe0bf545fb729f3e4d@finder",
-                            "nickname": "Cheems开心果",
-                            "headUrl": "https://wx.qlogo.cn/finderhead/ver_1/x0PXJE0ibzcf4nv856JNnQy7uUzkDZILJBqyKJ8NkZA7DBxtXgPF7bp3A8iaprxP3VxX6XwlV1WNAiavAPzEL3Fu6Lj5AibXVOgzOTtRDaAhKYjxyGm0wKf85Yrib4zTnPBicV/132",
-                            "signature": "弘扬戏曲文化，国粹永不过时"
+                            "username": "example_creator_1@finder",
+                            "nickname": "示例创作者",
+                            "headUrl": "https://example.invalid/avatar/example.jpg",
+                            "signature": "示例内容"
                           },
                           "objectDesc": {
-                            "description": "规则怪谈：大华一中(上)#规则怪谈#推理#cheems小剧场",
+                            "description": "示例内容",
                             "mediaType": 4
                           },
-                          "objectNonceId": "1562255896845221197_0_0_125_32_0_a14b1d42-8ce8-11f1-bf1f-6bbede2b3b85",
+                          "objectNonceId": "example-id",
                           "createtime": 1785228703
                         }
                       ],
-                      "lastBuffer": "EPDJstMG",
+                      "lastBuffer": "",
                       "continueFlag": 1,
                       "recentNDays": 7
                     },

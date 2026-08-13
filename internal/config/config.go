@@ -225,7 +225,7 @@ func (c *Config) LoadConfig() error {
 	Register(ConfigField{
 		Key:         "proxy.enabled",
 		Type:        ConfigTypeBool,
-		Default:     true,
+		Default:     false,
 		Description: "是否启动代理服务",
 		Title:       "启动代理服务",
 		Group:       "Proxy",
