@@ -96,15 +96,15 @@ func (a *OfficialAccountAdapter) register(d Deps) error {
 		}
 	}
 
+	r := NewRoutes(d.Config, d.Logger, d.DB)
 	var interceptorConfig *InterceptorPluginConfig
 	if d.Interceptor != nil {
 		interceptorConfig = NewConfig(d.Config)
-		for _, p := range interceptorConfig.GetPlugins(adapter.AdapterContext{DB: d.DB, Logger: d.Logger}) {
+		for _, p := range interceptorConfig.GetPlugins(adapter.AdapterContext{DB: d.DB, Logger: d.Logger}, r.client) {
 			d.Interceptor.AddPostPlugin(p)
 		}
 	}
 
-	r := NewRoutes(d.Config, d.Logger, d.DB)
 	if d.RouteRegistrar != nil {
 		r.RegisterRoutes(d.RouteRegistrar)
 	}

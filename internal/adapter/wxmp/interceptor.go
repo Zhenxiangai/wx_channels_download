@@ -24,12 +24,12 @@ func NewConfig(cfg *config.Config) *InterceptorPluginConfig {
 }
 
 // GetPlugins returns the official-account injection plugin.
-func (c *InterceptorPluginConfig) GetPlugins(ctx adapter.AdapterContext) []interface{} {
+func (c *InterceptorPluginConfig) GetPlugins(ctx adapter.AdapterContext, client *wxmp.OfficialAccountClient) []interface{} {
 	if c == nil || c.settings == nil {
 		return nil
 	}
 
 	return []interface{}{
-		wxmp.CreateOfficialAccountInterceptorPlugin(c.settings, c.version),
+		wxmp.CreateOfficialAccountInterceptorPlugin(c.settings, c.version, client),
 	}
 }

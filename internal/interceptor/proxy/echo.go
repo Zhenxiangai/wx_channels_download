@@ -179,8 +179,17 @@ func toEchoTarget(t *TargetConfig) *echo.TargetConfig {
 
 func (ctx *EchoContext) Req() *ContextReq {
 	c := ctx.impl
+	scheme := c.Req.URL.Scheme
+	if scheme == "" {
+		if c.Req.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
 	return &ContextReq{
 		URL: &ContextURL{
+			Scheme:   scheme,
 			Path:     c.Req.URL.Path,
 			Hostname: func() string { return c.Req.URL.Hostname() },
 			RawQuery: c.Req.URL.RawQuery,

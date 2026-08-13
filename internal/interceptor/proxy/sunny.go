@@ -101,6 +101,7 @@ type SunnyNetContextReq struct {
 	Header http.Header
 }
 type SunnyNetContextURL struct {
+	Scheme   string
 	Hostname func() string
 	Pathname string
 	RawQuery string
@@ -155,6 +156,7 @@ func (c *sunnyBridgeContext) Req() *ContextReq {
 	if c.impl == nil || c.impl.Req == nil {
 		return &ContextReq{
 			URL: &ContextURL{
+				Scheme:   "",
 				Path:     "",
 				Hostname: func() string { return "" },
 				RawQuery: "",
@@ -166,6 +168,7 @@ func (c *sunnyBridgeContext) Req() *ContextReq {
 	r := c.impl.Req()
 	return &ContextReq{
 		URL: &ContextURL{
+			Scheme:   r.URL.Scheme,
 			Path:     r.URL.Pathname,
 			Hostname: r.URL.Hostname,
 			RawQuery: r.URL.RawQuery,
@@ -266,6 +269,7 @@ func (p *SunnyNetProxy) HandleHTTPRequest(Conn SunnyNet.ConnHTTP) {
 			body := Conn.GetRequestBody()
 			req := SunnyNetContextReq{
 				URL: SunnyNetContextURL{
+					Scheme:   parsed_url.Scheme,
 					Hostname: func() string { return parsed_url.Hostname() },
 					Pathname: parsed_url.Path,
 					RawQuery: parsed_url.RawQuery,
@@ -281,7 +285,11 @@ func (p *SunnyNetProxy) HandleHTTPRequest(Conn SunnyNet.ConnHTTP) {
 		if parsed != nil {
 			host = parsed.Hostname()
 		}
-		log.Printf("[SunnyNet] Request: %s, Host: %s, Type: %d\n", u, host, Conn.Type())
+		path := ""
+		if parsed != nil {
+			path = parsed.Path
+		}
+		log.Printf("[SunnyNet] Request host: %s, path: %s, Type: %d\n", host, path, Conn.Type())
 		for _, plugin := range p.plugins {
 			switch pl := plugin.(type) {
 			case *SunnyNetPlugin:
@@ -395,6 +403,7 @@ func (p *SunnyNetProxy) HandleHTTPRequest(Conn SunnyNet.ConnHTTP) {
 				parsed_url, _ := url.Parse(u)
 				req := SunnyNetContextReq{
 					URL: SunnyNetContextURL{
+						Scheme:   parsed_url.Scheme,
 						Hostname: func() string { return parsed_url.Hostname() },
 						Pathname: parsed_url.Path,
 						RawQuery: parsed_url.RawQuery,

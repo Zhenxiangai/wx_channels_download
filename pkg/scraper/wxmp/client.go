@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"net"
 	"net/http"
@@ -33,6 +34,7 @@ import (
 
 var accounts = make(map[string]*OfficialAccount)
 var acct_mu sync.RWMutex
+var acct_file_mu sync.Mutex
 var official_timer_once sync.Once
 var official_ws_upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -84,6 +86,10 @@ func (acct *OfficialAccount) MergeFrom(source *OfficialAccount) {
 	}
 	if source.AppmsgToken != "" {
 		acct.AppmsgToken = source.AppmsgToken
+	}
+	if source.Cookie != "" {
+		acct.Cookie = source.Cookie
+		acct.CookieExpiration = source.CookieExpiration
 	}
 	if source.RefreshUri != "" {
 		acct.RefreshUri = source.RefreshUri
@@ -680,13 +686,25 @@ func (c *OfficialAccountClient) HandleRefreshEvent(ctx *gin.Context) {
 		Str("nickname", body.Nickname).
 		Logger()
 	logger.Info().Msg("refresh official account event: received")
+	target_acct, ok := c.store_credential(&body)
+	logger.Info().
+		Bool("has_waiter", ok).
+		Msg("refresh official account event: stored and notified")
+	is_manually_refresh := !ok
+	if is_manually_refresh {
+		go c.pushCredentialToRemoteServer(logger, target_acct)
+	}
+	result.Ok(ctx, nil)
+}
+
+func (c *OfficialAccountClient) store_credential(body *OfficialAccount) (*OfficialAccount, bool) {
 	now := time.Now().Unix()
 	acct_mu.Lock()
 	var target_acct *OfficialAccount
 	if old, exists := accounts[body.Biz]; exists {
 		// copy old account to avoid data race on reading fields
 		new_acct := *old
-		new_acct.MergeFrom(&body)
+		new_acct.MergeFrom(body)
 		if new_acct.AuthorId == "" && body.AuthorId != "" {
 			new_acct.AuthorId = body.AuthorId
 		}
@@ -709,7 +727,7 @@ func (c *OfficialAccountClient) HandleRefreshEvent(ctx *gin.Context) {
 			body.CreatedAt = now
 		}
 		body.UpdateTime = now
-		target_acct = &body
+		target_acct = body
 		accounts[body.Biz] = target_acct
 	}
 	acct_mu.Unlock()
@@ -723,14 +741,7 @@ func (c *OfficialAccountClient) HandleRefreshEvent(ctx *gin.Context) {
 		}
 	}
 	c.wait_mu.Unlock()
-	logger.Info().
-		Bool("has_waiter", ok).
-		Msg("refresh official account event: stored and notified")
-	is_manually_refresh := !ok
-	if is_manually_refresh {
-		go c.pushCredentialToRemoteServer(logger, target_acct)
-	}
-	result.Ok(ctx, nil)
+	return target_acct, ok
 }
 
 func (c *OfficialAccountClient) HandleRefreshAllRemoteOfficialAccount(ctx *gin.Context) {
@@ -1256,6 +1267,169 @@ func (c *OfficialAccountClient) HandleOfficialAccountProxy(ctx *gin.Context) {
 	}
 }
 
+func build_official_article_request(targetURL string, acct *OfficialAccount) (*http.Request, error) {
+	if acct == nil || strings.TrimSpace(acct.Biz) == "" || strings.TrimSpace(acct.Cookie) == "" {
+		return nil, errors.New("official account session unavailable")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(targetURL))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") ||
+		!strings.EqualFold(parsed.Hostname(), "mp.weixin.qq.com") ||
+		(parsed.Path != "/s" && !strings.HasPrefix(parsed.Path, "/s/")) {
+		return nil, errors.New("invalid official article URL")
+	}
+	query := parsed.Query()
+	if strings.TrimSpace(query.Get("__biz")) != acct.Biz {
+		return nil, errors.New("official article account mismatch")
+	}
+	if strings.TrimSpace(query.Get("mid")) == "" || strings.TrimSpace(query.Get("idx")) == "" || strings.TrimSpace(query.Get("sn")) == "" {
+		return nil, errors.New("official article identity incomplete")
+	}
+	query.Set("uin", acct.Uin)
+	query.Set("key", acct.Key)
+	if acct.PassTicket != "" {
+		query.Set("pass_ticket", acct.PassTicket)
+	}
+	query.Set("wx_header", "1")
+	parsed.RawQuery = query.Encode()
+	parsed.Fragment = ""
+	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Cookie", acct.Cookie)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 MicroMessenger/4.1.12")
+	return req, nil
+}
+
+func redact_official_article_session(body []byte, acct *OfficialAccount) []byte {
+	if acct == nil {
+		return body
+	}
+	values := []string{acct.Uin, acct.Key, acct.PassTicket, acct.AppmsgToken}
+	for _, part := range strings.Split(acct.Cookie, ";") {
+		if _, value, ok := strings.Cut(part, "="); ok {
+			values = append(values, strings.TrimSpace(value))
+		}
+	}
+	redacted := body
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if len(value) < 4 {
+			continue
+		}
+		htmlEscaped := stdhtml.EscapeString(value)
+		variants := map[string]struct{}{
+			value:                        {},
+			url.QueryEscape(value):       {},
+			htmlEscaped:                  {},
+			url.QueryEscape(htmlEscaped): {},
+			stdhtml.EscapeString(url.QueryEscape(value)): {},
+		}
+		for variant := range variants {
+			if variant != "" {
+				redacted = bytes.ReplaceAll(redacted, []byte(variant), []byte("[REDACTED]"))
+			}
+		}
+	}
+	return redacted
+}
+
+func is_loopback_remote_addr(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func is_trusted_local_article_request(request *http.Request) bool {
+	return request != nil &&
+		is_loopback_remote_addr(request.RemoteAddr) &&
+		strings.TrimSpace(request.Header.Get("Origin")) == "" &&
+		request.Header.Get("X-WXMP-Local-Client") == "1"
+}
+
+func official_article_redirect_policy(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("official article redirect limit exceeded")
+	}
+	if req == nil || req.URL == nil || !strings.EqualFold(req.URL.Scheme, "https") ||
+		!strings.EqualFold(req.URL.Hostname(), "mp.weixin.qq.com") ||
+		(req.URL.Path != "/s" && !strings.HasPrefix(req.URL.Path, "/s/")) {
+		return errors.New("unsafe official article redirect")
+	}
+	if len(via) == 0 || via[0] == nil || via[0].URL == nil {
+		return errors.New("official article redirect origin missing")
+	}
+	originBiz := strings.TrimSpace(via[0].URL.Query().Get("__biz"))
+	redirectQuery := req.URL.Query()
+	redirectBiz := strings.TrimSpace(redirectQuery.Get("__biz"))
+	if originBiz == "" || redirectBiz == "" || originBiz != redirectBiz {
+		return errors.New("official article redirect account mismatch")
+	}
+	if strings.TrimSpace(redirectQuery.Get("mid")) == "" ||
+		strings.TrimSpace(redirectQuery.Get("idx")) == "" ||
+		strings.TrimSpace(redirectQuery.Get("sn")) == "" {
+		return errors.New("official article redirect identity incomplete")
+	}
+	return nil
+}
+
+// HandleFetchOfficialArticle returns one same-account public article through the
+// locally captured WeChat session. It rejects non-WeChat hosts and account
+// mismatches, and never exposes session fields in its response.
+func (c *OfficialAccountClient) HandleFetchOfficialArticle(ctx *gin.Context) {
+	if ctx == nil || !is_trusted_local_article_request(ctx.Request) {
+		ctx.String(http.StatusForbidden, "local access required")
+		return
+	}
+	targetURL := strings.TrimSpace(ctx.Query("url"))
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "invalid article URL")
+		return
+	}
+	biz := strings.TrimSpace(parsed.Query().Get("__biz"))
+	acct_mu.RLock()
+	stored := accounts[biz]
+	var acct *OfficialAccount
+	if stored != nil {
+		copy := *stored
+		acct = &copy
+	}
+	acct_mu.RUnlock()
+	req, err := build_official_article_request(targetURL, acct)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "article session unavailable")
+		return
+	}
+	client := &http.Client{
+		Timeout:       25 * time.Second,
+		CheckRedirect: official_article_redirect_policy,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		ctx.String(http.StatusBadGateway, "article fetch failed")
+		return
+	}
+	defer resp.Body.Close()
+	const maxArticleBytes = 8 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxArticleBytes+1))
+	if err != nil || len(body) > maxArticleBytes {
+		ctx.String(http.StatusBadGateway, "article response invalid")
+		return
+	}
+	body = redact_official_article_session(body, acct)
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "text/html; charset=utf-8"
+	}
+	ctx.Data(resp.StatusCode, contentType, body)
+}
+
 func (c *OfficialAccountClient) HandleOfficialAccountManagerHome(ctx *gin.Context) {
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	html := string(manager_html)
@@ -1469,7 +1643,7 @@ func (c *OfficialAccountClient) BuildURL(uu string, params map[string]string) st
 	return target_url
 }
 
-func (c *OfficialAccountClient) Fetch(target_url string, referer string) (*http.Response, error) {
+func (c *OfficialAccountClient) Fetch(target_url string, referer string, cookie ...string) (*http.Response, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", target_url, nil)
 	if err != nil {
@@ -1480,6 +1654,9 @@ func (c *OfficialAccountClient) Fetch(target_url string, referer string) (*http.
 	req.Header.Set("accept-language", "en-US,en;q=0.9")
 	req.Header.Set("priority", "u=1, i")
 	req.Header.Set("referer", referer)
+	if len(cookie) > 0 && strings.TrimSpace(cookie[0]) != "" {
+		req.Header.Set("Cookie", cookie[0])
+	}
 	req.Header.Set("sec-fetch-dest", "empty")
 	req.Header.Set("sec-fetch-mode", "cors")
 	req.Header.Set("sec-fetch-site", "same-origin")
@@ -2338,7 +2515,7 @@ func (c *OfficialAccountClient) fetchMsgListWithAccount(logger zerolog.Logger, a
 	params.Add("acctmode", "0")
 	params.Add("pass_ticket", acct.PassTicket)
 	referer := `https://mp.weixin.qq.com/mp/profile_ext?` + params.Encode()
-	resp, err := c.Fetch(target_url, referer)
+	resp, err := c.Fetch(target_url, referer, acct.Cookie)
 	if err != nil {
 		fmt.Printf("c.Fetch msg list (inline): error: %s\n", err.Error())
 		code := result.CodeFetchMsgFailed
@@ -2436,7 +2613,7 @@ func (c *OfficialAccountClient) fetchMsgList(logger zerolog.Logger, biz string, 
 	}
 	target_url := c.BuildMsgListURL(existing, offset)
 	referer := c.BuildMsgListReferer(existing)
-	resp, err := c.Fetch(target_url, referer)
+	resp, err := c.Fetch(target_url, referer, existing.Cookie)
 	if err != nil {
 		fmt.Printf("c.Fetch msg list: error: %s\n", err.Error())
 		code := result.CodeFetchMsgFailed
@@ -2547,19 +2724,70 @@ func fetch_full_content(u string) string {
 }
 
 var mp_json_filepath = "mp.json"
+var replace_file_atomically = atomic_replace_file
+
+func atomic_write_owner_only(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	committed := false
+	defer func() {
+		_ = temp.Close()
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := replace_file_atomically(tempPath, path); err != nil {
+		return err
+	}
+	committed = true
+	if runtime.GOOS != "windows" {
+		directory, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		err = directory.Sync()
+		closeErr := directory.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
 
 func save_accounts() {
+	acct_file_mu.Lock()
+	defer acct_file_mu.Unlock()
 	acct_mu.RLock()
-	defer acct_mu.RUnlock()
-
 	data, err := json.MarshalIndent(accounts, "", "  ")
+	acct_mu.RUnlock()
 	if err != nil {
 		fmt.Println("saveAccounts marshal err:", err)
 		return
 	}
 
-	err = os.WriteFile(mp_json_filepath, data, 0644)
-	if err != nil {
+	if err = atomic_write_owner_only(mp_json_filepath, data); err != nil {
 		fmt.Println("saveAccounts write err:", err)
 	}
 }
