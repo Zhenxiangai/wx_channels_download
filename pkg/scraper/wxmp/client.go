@@ -1319,8 +1319,15 @@ func redact_official_article_session(body []byte, acct *OfficialAccount) []byte 
 		if len(value) < 4 {
 			continue
 		}
-		variants := []string{value, url.QueryEscape(value), stdhtml.EscapeString(value)}
-		for _, variant := range variants {
+		htmlEscaped := stdhtml.EscapeString(value)
+		variants := map[string]struct{}{
+			value:                        {},
+			url.QueryEscape(value):       {},
+			htmlEscaped:                  {},
+			url.QueryEscape(htmlEscaped): {},
+			stdhtml.EscapeString(url.QueryEscape(value)): {},
+		}
+		for variant := range variants {
 			if variant != "" {
 				redacted = bytes.ReplaceAll(redacted, []byte(variant), []byte("[REDACTED]"))
 			}
@@ -1358,9 +1365,15 @@ func official_article_redirect_policy(req *http.Request, via []*http.Request) er
 		return errors.New("official article redirect origin missing")
 	}
 	originBiz := strings.TrimSpace(via[0].URL.Query().Get("__biz"))
-	redirectBiz := strings.TrimSpace(req.URL.Query().Get("__biz"))
+	redirectQuery := req.URL.Query()
+	redirectBiz := strings.TrimSpace(redirectQuery.Get("__biz"))
 	if originBiz == "" || redirectBiz == "" || originBiz != redirectBiz {
 		return errors.New("official article redirect account mismatch")
+	}
+	if strings.TrimSpace(redirectQuery.Get("mid")) == "" ||
+		strings.TrimSpace(redirectQuery.Get("idx")) == "" ||
+		strings.TrimSpace(redirectQuery.Get("sn")) == "" {
+		return errors.New("official article redirect identity incomplete")
 	}
 	return nil
 }

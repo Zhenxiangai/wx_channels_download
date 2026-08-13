@@ -194,7 +194,7 @@ func TestBuildOfficialArticleRequestAddsSessionWithoutChangingArticleIdentity(t 
 
 func TestRedactOfficialArticleSessionRemovesCapturedValues(t *testing.T) {
 	acct := &OfficialAccount{Uin: "uin-secret", Key: "key+secret/value", PassTicket: "pass&secret", AppmsgToken: "token-secret", Cookie: "session=cookie+secret/value; other=other&secret"}
-	body := []byte(`uin-secret key+secret/value key%2Bsecret%2Fvalue pass&amp;secret pass%26secret token-secret cookie%2Bsecret%2Fvalue other&amp;secret preserved`)
+	body := []byte(`uin-secret key+secret/value key%2Bsecret%2Fvalue pass&amp;secret pass%26secret pass%26amp%3Bsecret token-secret cookie%2Bsecret%2Fvalue other&amp;secret preserved`)
 	got := redact_official_article_session(body, acct)
 	for _, secret := range []string{
 		"uin-secret",
@@ -202,6 +202,7 @@ func TestRedactOfficialArticleSessionRemovesCapturedValues(t *testing.T) {
 		"key%2Bsecret%2Fvalue",
 		"pass&amp;secret",
 		"pass%26secret",
+		"pass%26amp%3Bsecret",
 		"token-secret",
 		"cookie%2Bsecret%2Fvalue",
 		"other&amp;secret",
@@ -216,13 +217,15 @@ func TestRedactOfficialArticleSessionRemovesCapturedValues(t *testing.T) {
 }
 
 func TestOfficialArticleRedirectPolicyRejectsUnsafeTargets(t *testing.T) {
-	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s", RawQuery: "__biz=biz-id"}}}
+	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s", RawQuery: "__biz=biz-id&mid=1&idx=1&sn=origin"}}}
 	for _, target := range []string{
-		"http://mp.weixin.qq.com/s?__biz=biz-id",
-		"https://example.com/s?__biz=biz-id",
-		"https://mp.weixin.qq.com.example.com/s?__biz=biz-id",
-		"https://mp.weixin.qq.com/other?__biz=biz-id",
-		"https://mp.weixin.qq.com/s?__biz=other-biz",
+		"http://mp.weixin.qq.com/s?__biz=biz-id&mid=2&idx=1&sn=next",
+		"https://example.com/s?__biz=biz-id&mid=2&idx=1&sn=next",
+		"https://mp.weixin.qq.com.example.com/s?__biz=biz-id&mid=2&idx=1&sn=next",
+		"https://mp.weixin.qq.com/other?__biz=biz-id&mid=2&idx=1&sn=next",
+		"https://mp.weixin.qq.com/s?__biz=other-biz&mid=2&idx=1&sn=next",
+		"https://mp.weixin.qq.com/s?__biz=biz-id",
+		"https://mp.weixin.qq.com/s?__biz=biz-id&mid=2&idx=1",
 	} {
 		req, err := http.NewRequest(http.MethodGet, target, nil)
 		if err != nil {
@@ -235,8 +238,8 @@ func TestOfficialArticleRedirectPolicyRejectsUnsafeTargets(t *testing.T) {
 }
 
 func TestOfficialArticleRedirectPolicyAllowsBoundedSameHostArticleRedirect(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodGet, "https://mp.weixin.qq.com/s/next?__biz=biz-id", nil)
-	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s", RawQuery: "__biz=biz-id"}}}
+	req, _ := http.NewRequest(http.MethodGet, "https://mp.weixin.qq.com/s/next?__biz=biz-id&mid=2&idx=1&sn=next", nil)
+	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s", RawQuery: "__biz=biz-id&mid=1&idx=1&sn=origin"}}}
 	if err := official_article_redirect_policy(req, via); err != nil {
 		t.Fatalf("same-host article redirect rejected: %v", err)
 	}
