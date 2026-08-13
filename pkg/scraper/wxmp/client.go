@@ -1323,10 +1323,35 @@ func redact_official_article_session(body []byte, acct *OfficialAccount) []byte 
 	return redacted
 }
 
+func is_loopback_remote_addr(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func official_article_redirect_policy(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("official article redirect limit exceeded")
+	}
+	if req == nil || req.URL == nil || !strings.EqualFold(req.URL.Scheme, "https") ||
+		!strings.EqualFold(req.URL.Hostname(), "mp.weixin.qq.com") ||
+		(req.URL.Path != "/s" && !strings.HasPrefix(req.URL.Path, "/s/")) {
+		return errors.New("unsafe official article redirect")
+	}
+	return nil
+}
+
 // HandleFetchOfficialArticle returns one same-account public article through the
 // locally captured WeChat session. It rejects non-WeChat hosts and account
 // mismatches, and never exposes session fields in its response.
 func (c *OfficialAccountClient) HandleFetchOfficialArticle(ctx *gin.Context) {
+	if ctx == nil || ctx.Request == nil || !is_loopback_remote_addr(ctx.Request.RemoteAddr) {
+		ctx.String(http.StatusForbidden, "local access required")
+		return
+	}
 	targetURL := strings.TrimSpace(ctx.Query("url"))
 	parsed, err := url.Parse(targetURL)
 	if err != nil {
@@ -1347,7 +1372,10 @@ func (c *OfficialAccountClient) HandleFetchOfficialArticle(ctx *gin.Context) {
 		ctx.String(http.StatusBadRequest, "article session unavailable")
 		return
 	}
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := &http.Client{
+		Timeout:       25 * time.Second,
+		CheckRedirect: official_article_redirect_policy,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		ctx.String(http.StatusBadGateway, "article fetch failed")
@@ -2662,6 +2690,57 @@ func fetch_full_content(u string) string {
 }
 
 var mp_json_filepath = "mp.json"
+var replace_file_atomically = atomic_replace_file
+
+func atomic_write_owner_only(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	committed := false
+	defer func() {
+		_ = temp.Close()
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := replace_file_atomically(tempPath, path); err != nil {
+		return err
+	}
+	committed = true
+	if runtime.GOOS != "windows" {
+		directory, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		err = directory.Sync()
+		closeErr := directory.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
 
 func save_accounts() {
 	acct_file_mu.Lock()
@@ -2674,17 +2753,7 @@ func save_accounts() {
 		return
 	}
 
-	file, err := os.OpenFile(mp_json_filepath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		fmt.Println("saveAccounts open err:", err)
-		return
-	}
-	defer file.Close()
-	if err = file.Chmod(0600); err != nil {
-		fmt.Println("saveAccounts chmod err:", err)
-		return
-	}
-	if _, err = file.Write(data); err != nil {
+	if err = atomic_write_owner_only(mp_json_filepath, data); err != nil {
 		fmt.Println("saveAccounts write err:", err)
 	}
 }

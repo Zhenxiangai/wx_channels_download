@@ -3,12 +3,16 @@ package wxmp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 
 	"wx_channel/internal/interceptor/proxy"
 )
@@ -199,6 +203,108 @@ func TestRedactOfficialArticleSessionRemovesCapturedValues(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte("preserved")) {
 		t.Fatal("redaction modified unrelated content")
+	}
+}
+
+func TestOfficialArticleRedirectPolicyRejectsUnsafeTargets(t *testing.T) {
+	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s"}}}
+	for _, target := range []string{
+		"http://mp.weixin.qq.com/s?__biz=biz-id",
+		"https://example.com/s?__biz=biz-id",
+		"https://mp.weixin.qq.com.example.com/s?__biz=biz-id",
+		"https://mp.weixin.qq.com/other?__biz=biz-id",
+	} {
+		req, err := http.NewRequest(http.MethodGet, target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := official_article_redirect_policy(req, via); err == nil {
+			t.Fatalf("redirect to %q succeeded, want rejection", target)
+		}
+	}
+}
+
+func TestOfficialArticleRedirectPolicyAllowsBoundedSameHostArticleRedirect(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodGet, "https://mp.weixin.qq.com/s/next?__biz=biz-id", nil)
+	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "mp.weixin.qq.com", Path: "/s"}}}
+	if err := official_article_redirect_policy(req, via); err != nil {
+		t.Fatalf("same-host article redirect rejected: %v", err)
+	}
+	tooMany := make([]*http.Request, 5)
+	if err := official_article_redirect_policy(req, tooMany); err == nil {
+		t.Fatal("redirect chain longer than limit succeeded")
+	}
+}
+
+func TestHandleFetchOfficialArticleRejectsNonLoopbackClient(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/mp/article/content?url=https%3A%2F%2Fmp.weixin.qq.com%2Fs%3F__biz%3Dbiz-id%26mid%3D1%26idx%3D1%26sn%3Dx", nil)
+	request.RemoteAddr = "192.0.2.10:4567"
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = request
+	(&OfficialAccountClient{}).HandleFetchOfficialArticle(ctx)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestAtomicWriteOwnerOnlyReplacesExistingFile(t *testing.T) {
+	path := t.TempDir() + "/mp.json"
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomic_write_owner_only(path, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("file = %q, want new", got)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+		}
+	}
+	matches, err := filepath.Glob(path + ".tmp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary files remain: %v", matches)
+	}
+}
+
+func TestAtomicWriteOwnerOnlyPreservesExistingFileOnReplaceFailure(t *testing.T) {
+	path := t.TempDir() + "/mp.json"
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := replace_file_atomically
+	replace_file_atomically = func(string, string) error { return errors.New("replace failed") }
+	t.Cleanup(func() { replace_file_atomically = original })
+	if err := atomic_write_owner_only(path, []byte("new")); err == nil {
+		t.Fatal("atomic write succeeded, want replacement failure")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old" {
+		t.Fatalf("existing file = %q, want old", got)
+	}
+	matches, err := filepath.Glob(path + ".tmp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary files remain after failure: %v", matches)
 	}
 }
 
