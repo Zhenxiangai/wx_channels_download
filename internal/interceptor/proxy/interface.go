@@ -54,6 +54,7 @@ type ContextReq struct {
 	Cookies []*http.Cookie
 }
 type ContextURL struct {
+	Scheme   string
 	Path     string
 	Hostname func() string
 	RawQuery string

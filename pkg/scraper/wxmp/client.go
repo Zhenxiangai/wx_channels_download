@@ -33,6 +33,7 @@ import (
 
 var accounts = make(map[string]*OfficialAccount)
 var acct_mu sync.RWMutex
+var acct_file_mu sync.Mutex
 var official_timer_once sync.Once
 var official_ws_upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -84,6 +85,10 @@ func (acct *OfficialAccount) MergeFrom(source *OfficialAccount) {
 	}
 	if source.AppmsgToken != "" {
 		acct.AppmsgToken = source.AppmsgToken
+	}
+	if source.Cookie != "" {
+		acct.Cookie = source.Cookie
+		acct.CookieExpiration = source.CookieExpiration
 	}
 	if source.RefreshUri != "" {
 		acct.RefreshUri = source.RefreshUri
@@ -680,13 +685,25 @@ func (c *OfficialAccountClient) HandleRefreshEvent(ctx *gin.Context) {
 		Str("nickname", body.Nickname).
 		Logger()
 	logger.Info().Msg("refresh official account event: received")
+	target_acct, ok := c.store_credential(&body)
+	logger.Info().
+		Bool("has_waiter", ok).
+		Msg("refresh official account event: stored and notified")
+	is_manually_refresh := !ok
+	if is_manually_refresh {
+		go c.pushCredentialToRemoteServer(logger, target_acct)
+	}
+	result.Ok(ctx, nil)
+}
+
+func (c *OfficialAccountClient) store_credential(body *OfficialAccount) (*OfficialAccount, bool) {
 	now := time.Now().Unix()
 	acct_mu.Lock()
 	var target_acct *OfficialAccount
 	if old, exists := accounts[body.Biz]; exists {
 		// copy old account to avoid data race on reading fields
 		new_acct := *old
-		new_acct.MergeFrom(&body)
+		new_acct.MergeFrom(body)
 		if new_acct.AuthorId == "" && body.AuthorId != "" {
 			new_acct.AuthorId = body.AuthorId
 		}
@@ -709,7 +726,7 @@ func (c *OfficialAccountClient) HandleRefreshEvent(ctx *gin.Context) {
 			body.CreatedAt = now
 		}
 		body.UpdateTime = now
-		target_acct = &body
+		target_acct = body
 		accounts[body.Biz] = target_acct
 	}
 	acct_mu.Unlock()
@@ -723,14 +740,7 @@ func (c *OfficialAccountClient) HandleRefreshEvent(ctx *gin.Context) {
 		}
 	}
 	c.wait_mu.Unlock()
-	logger.Info().
-		Bool("has_waiter", ok).
-		Msg("refresh official account event: stored and notified")
-	is_manually_refresh := !ok
-	if is_manually_refresh {
-		go c.pushCredentialToRemoteServer(logger, target_acct)
-	}
-	result.Ok(ctx, nil)
+	return target_acct, ok
 }
 
 func (c *OfficialAccountClient) HandleRefreshAllRemoteOfficialAccount(ctx *gin.Context) {
@@ -1469,7 +1479,7 @@ func (c *OfficialAccountClient) BuildURL(uu string, params map[string]string) st
 	return target_url
 }
 
-func (c *OfficialAccountClient) Fetch(target_url string, referer string) (*http.Response, error) {
+func (c *OfficialAccountClient) Fetch(target_url string, referer string, cookie ...string) (*http.Response, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", target_url, nil)
 	if err != nil {
@@ -1480,6 +1490,9 @@ func (c *OfficialAccountClient) Fetch(target_url string, referer string) (*http.
 	req.Header.Set("accept-language", "en-US,en;q=0.9")
 	req.Header.Set("priority", "u=1, i")
 	req.Header.Set("referer", referer)
+	if len(cookie) > 0 && strings.TrimSpace(cookie[0]) != "" {
+		req.Header.Set("Cookie", cookie[0])
+	}
 	req.Header.Set("sec-fetch-dest", "empty")
 	req.Header.Set("sec-fetch-mode", "cors")
 	req.Header.Set("sec-fetch-site", "same-origin")
@@ -2338,7 +2351,7 @@ func (c *OfficialAccountClient) fetchMsgListWithAccount(logger zerolog.Logger, a
 	params.Add("acctmode", "0")
 	params.Add("pass_ticket", acct.PassTicket)
 	referer := `https://mp.weixin.qq.com/mp/profile_ext?` + params.Encode()
-	resp, err := c.Fetch(target_url, referer)
+	resp, err := c.Fetch(target_url, referer, acct.Cookie)
 	if err != nil {
 		fmt.Printf("c.Fetch msg list (inline): error: %s\n", err.Error())
 		code := result.CodeFetchMsgFailed
@@ -2436,7 +2449,7 @@ func (c *OfficialAccountClient) fetchMsgList(logger zerolog.Logger, biz string, 
 	}
 	target_url := c.BuildMsgListURL(existing, offset)
 	referer := c.BuildMsgListReferer(existing)
-	resp, err := c.Fetch(target_url, referer)
+	resp, err := c.Fetch(target_url, referer, existing.Cookie)
 	if err != nil {
 		fmt.Printf("c.Fetch msg list: error: %s\n", err.Error())
 		code := result.CodeFetchMsgFailed
@@ -2549,17 +2562,27 @@ func fetch_full_content(u string) string {
 var mp_json_filepath = "mp.json"
 
 func save_accounts() {
+	acct_file_mu.Lock()
+	defer acct_file_mu.Unlock()
 	acct_mu.RLock()
-	defer acct_mu.RUnlock()
-
 	data, err := json.MarshalIndent(accounts, "", "  ")
+	acct_mu.RUnlock()
 	if err != nil {
 		fmt.Println("saveAccounts marshal err:", err)
 		return
 	}
 
-	err = os.WriteFile(mp_json_filepath, data, 0644)
+	file, err := os.OpenFile(mp_json_filepath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
+		fmt.Println("saveAccounts open err:", err)
+		return
+	}
+	defer file.Close()
+	if err = file.Chmod(0600); err != nil {
+		fmt.Println("saveAccounts chmod err:", err)
+		return
+	}
+	if _, err = file.Write(data); err != nil {
 		fmt.Println("saveAccounts write err:", err)
 	}
 }

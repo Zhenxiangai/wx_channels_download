@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"html"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"wx_channel/frontend"
 	"wx_channel/internal/interceptor"
@@ -139,7 +141,59 @@ func first_official_account_value(values ...string) string {
 	return ""
 }
 
-func CreateOfficialAccountInterceptorPlugin(cfg *OfficialAccountConfig, version string) *proxy.Plugin {
+func official_account_credential_from_request(req *proxy.ContextReq) *OfficialAccount {
+	if req == nil || req.URL == nil || !strings.EqualFold(req.URL.Scheme, "https") ||
+		!strings.EqualFold(req.URL.Hostname(), "mp.weixin.qq.com") {
+		return nil
+	}
+	query, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil
+	}
+	is_profile_request := req.URL.Path == "/mp/profile_ext"
+	is_article_request := req.URL.Path == "/s" || strings.HasPrefix(req.URL.Path, "/s/")
+	if !is_profile_request && !is_article_request {
+		return nil
+	}
+	if is_profile_request {
+		action := strings.TrimSpace(query.Get("action"))
+		if action != "home" && action != "getmsg" {
+			return nil
+		}
+	}
+	biz := strings.TrimSpace(query.Get("__biz"))
+	uin := strings.TrimSpace(query.Get("uin"))
+	key := strings.TrimSpace(query.Get("key"))
+	if biz == "" || uin == "" || key == "" {
+		return nil
+	}
+	cookie := ""
+	if req.Header != nil {
+		cookie = strings.TrimSpace(req.Header.Get("Cookie"))
+	}
+	if is_article_request && cookie == "" {
+		return nil
+	}
+	refresh_query := url.Values{"action": {"home"}, "__biz": {biz}}
+	credential := &OfficialAccount{
+		Biz:        biz,
+		Uin:        uin,
+		Key:        key,
+		PassTicket: strings.TrimSpace(query.Get("pass_ticket")),
+		Cookie:     cookie,
+		RefreshUri: "https://mp.weixin.qq.com/mp/profile_ext?" + refresh_query.Encode(),
+	}
+	if cookie != "" {
+		credential.CookieExpiration = time.Now().Add(24 * time.Hour).Unix()
+	}
+	return credential
+}
+
+func CreateOfficialAccountInterceptorPlugin(cfg *OfficialAccountConfig, version string, clients ...*OfficialAccountClient) *proxy.Plugin {
+	var client *OfficialAccountClient
+	if len(clients) > 0 {
+		client = clients[0]
+	}
 	asset_base_url := "/__assets"
 	url_build := frontend.NewURLBuild(asset_base_url, nil)
 	asset_version := version
@@ -147,19 +201,32 @@ func CreateOfficialAccountInterceptorPlugin(cfg *OfficialAccountConfig, version 
 		asset_version = "static"
 	}
 	version_query := url.Values{"v": []string{asset_version}}
+	diagnostic_path := ""
+	if cfg != nil && cfg.WorkDir != "" {
+		diagnostic_path = filepath.Join(cfg.WorkDir, "wxmp-request-diagnostics.jsonl")
+	}
 	return &proxy.Plugin{
 		Match: "qq.com",
 		OnRequest: func(ctx proxy.Context) {
-			if ctx.Req().URL.Hostname() != "mp.weixin.qq.com" {
+			req := ctx.Req()
+			if credential := official_account_credential_from_request(req); credential != nil && client != nil {
+				client.store_credential(credential)
+			}
+			if req.URL.Hostname() != "mp.weixin.qq.com" {
 				return
 			}
-			interceptor.MockFrontendStaticAsset(ctx, ctx.Req().URL.Path, interceptor.FrontendStaticAssetMockOptions{
+			interceptor.MockFrontendStaticAsset(ctx, req.URL.Path, interceptor.FrontendStaticAssetMockOptions{
 				PlatformPrefix: StaticAssetsPath + "/",
 				PlatformFS:     Assets.InjectFS,
 				UserScriptPath: cfg.GlobalScriptPath,
 			})
 		},
 		OnResponse: func(ctx proxy.Context) {
+			if official_account_diagnostics_enabled(diagnostic_path) {
+				if diagnostic := official_account_request_diagnostic(ctx.Req(), ctx.Res()); diagnostic != nil {
+					_ = append_official_account_diagnostic(diagnostic_path, diagnostic)
+				}
+			}
 			resp_content_type := strings.ToLower(ctx.GetResponseHeader("Content-Type"))
 			hostname := ctx.Req().URL.Hostname()
 			// pathname := ctx.Req().URL.Path
