@@ -152,7 +152,8 @@ func official_account_credential_from_request(req *proxy.ContextReq) *OfficialAc
 	}
 	is_profile_request := req.URL.Path == "/mp/profile_ext"
 	is_article_request := req.URL.Path == "/s" || strings.HasPrefix(req.URL.Path, "/s/")
-	if !is_profile_request && !is_article_request {
+	is_cookie_less_session_probe := req.URL.Path == "/mp/relatedsearchword"
+	if !is_profile_request && !is_article_request && !is_cookie_less_session_probe {
 		return nil
 	}
 	if is_profile_request {
@@ -164,24 +165,35 @@ func official_account_credential_from_request(req *proxy.ContextReq) *OfficialAc
 	biz := strings.TrimSpace(query.Get("__biz"))
 	uin := strings.TrimSpace(query.Get("uin"))
 	key := strings.TrimSpace(query.Get("key"))
+	pass_ticket := strings.TrimSpace(query.Get("pass_ticket"))
+	appmsg_token := ""
+	if is_cookie_less_session_probe {
+		appmsg_token = strings.TrimSpace(query.Get("appmsg_token"))
+	}
 	if biz == "" || uin == "" || key == "" {
+		return nil
+	}
+	if is_cookie_less_session_probe && (pass_ticket == "" || appmsg_token == "" ||
+		strings.TrimSpace(query.Get("mid")) == "" || strings.TrimSpace(query.Get("idx")) == "" ||
+		strings.TrimSpace(query.Get("sessionid")) == "") {
 		return nil
 	}
 	cookie := ""
 	if req.Header != nil {
 		cookie = strings.TrimSpace(req.Header.Get("Cookie"))
 	}
-	if is_article_request && cookie == "" {
+	if cookie == "" && !is_cookie_less_session_probe {
 		return nil
 	}
 	refresh_query := url.Values{"action": {"home"}, "__biz": {biz}}
 	credential := &OfficialAccount{
-		Biz:        biz,
-		Uin:        uin,
-		Key:        key,
-		PassTicket: strings.TrimSpace(query.Get("pass_ticket")),
-		Cookie:     cookie,
-		RefreshUri: "https://mp.weixin.qq.com/mp/profile_ext?" + refresh_query.Encode(),
+		Biz:         biz,
+		Uin:         uin,
+		Key:         key,
+		PassTicket:  pass_ticket,
+		AppmsgToken: appmsg_token,
+		Cookie:      cookie,
+		RefreshUri:  "https://mp.weixin.qq.com/mp/profile_ext?" + refresh_query.Encode(),
 	}
 	if cookie != "" {
 		credential.CookieExpiration = time.Now().Add(24 * time.Hour).Unix()
