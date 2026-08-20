@@ -93,6 +93,100 @@ func TestOfficialAccountCredentialFromArticleRejectsMissingCookie(t *testing.T) 
 	}
 }
 
+func TestOfficialAccountCredentialFromProfileRejectsMissingCookie(t *testing.T) {
+	query := url.Values{"action": {"home"}, "__biz": {"biz-id"}, "uin": {"uin-secret"}, "key": {"key-secret"}}
+	req := test_context_request("https", "mp.weixin.qq.com", "/mp/profile_ext", query)
+	req.Header.Del("Cookie")
+	if got := official_account_credential_from_request(req); got != nil {
+		t.Fatal("profile request without cookie returned credential")
+	}
+}
+
+func TestOfficialAccountCredentialFromCookieLessRelatedSearchRequest(t *testing.T) {
+	query := url.Values{
+		"__biz":        {"biz-id"},
+		"uin":          {"uin-secret"},
+		"key":          {"key-secret"},
+		"pass_ticket":  {"pass-secret"},
+		"appmsg_token": {"appmsg-secret"},
+		"mid":          {"article-mid"},
+		"idx":          {"1"},
+		"sessionid":    {"session-id"},
+	}
+	req := test_context_request("https", "mp.weixin.qq.com", "/mp/relatedsearchword", query)
+	req.Header.Del("Cookie")
+	got := official_account_credential_from_request(req)
+	if got == nil {
+		t.Fatal("complete cookie-less related-search request returned nil")
+	}
+	if got.Biz != "biz-id" || got.Uin != "uin-secret" || got.Key != "key-secret" || got.PassTicket != "pass-secret" || got.AppmsgToken != "appmsg-secret" || got.Cookie != "" {
+		t.Fatal("captured cookie-less session metadata does not match request")
+	}
+
+	for _, missing := range []string{"__biz", "uin", "key", "pass_ticket", "appmsg_token", "mid", "idx", "sessionid"} {
+		incomplete := url.Values{}
+		for key, values := range query {
+			incomplete[key] = append([]string(nil), values...)
+		}
+		incomplete.Del(missing)
+		incompleteReq := test_context_request("https", "mp.weixin.qq.com", "/mp/relatedsearchword", incomplete)
+		incompleteReq.Header.Del("Cookie")
+		if credential := official_account_credential_from_request(incompleteReq); credential != nil {
+			t.Fatalf("request missing %s returned credential", missing)
+		}
+	}
+
+	for _, field := range []string{"__biz", "uin", "key", "pass_ticket", "appmsg_token", "mid", "idx", "sessionid"} {
+		whitespace := url.Values{}
+		for key, values := range query {
+			whitespace[key] = append([]string(nil), values...)
+		}
+		whitespace.Set(field, "   ")
+		whitespaceReq := test_context_request("https", "mp.weixin.qq.com", "/mp/relatedsearchword", whitespace)
+		whitespaceReq.Header.Del("Cookie")
+		if credential := official_account_credential_from_request(whitespaceReq); credential != nil {
+			t.Fatalf("request with whitespace-only %s returned credential", field)
+		}
+	}
+
+	for _, path := range []string{"/mp/jsmonitor", "/mp/relatedsearchword/", "/mp/relatedsearchword/child"} {
+		wrongPathReq := test_context_request("https", "mp.weixin.qq.com", path, query)
+		wrongPathReq.Header.Del("Cookie")
+		if credential := official_account_credential_from_request(wrongPathReq); credential != nil {
+			t.Fatalf("cookie-less request from non-whitelisted path %q returned credential", path)
+		}
+	}
+
+	for _, location := range []struct{ scheme, host string }{
+		{scheme: "http", host: "mp.weixin.qq.com"},
+		{scheme: "https", host: "example.com"},
+		{scheme: "https", host: "mp.weixin.qq.com.example.com"},
+	} {
+		wrongLocationReq := test_context_request(location.scheme, location.host, "/mp/relatedsearchword", query)
+		wrongLocationReq.Header.Del("Cookie")
+		if credential := official_account_credential_from_request(wrongLocationReq); credential != nil {
+			t.Fatalf("cookie-less request from %s://%s returned credential", location.scheme, location.host)
+		}
+	}
+}
+
+func TestOfficialAccountCredentialFromArticleDoesNotExpandCapturedFields(t *testing.T) {
+	query := url.Values{
+		"__biz":        {"biz-id"},
+		"uin":          {"uin-secret"},
+		"key":          {"key-secret"},
+		"pass_ticket":  {"pass-secret"},
+		"appmsg_token": {"must-not-be-captured"},
+	}
+	got := official_account_credential_from_request(test_context_request("https", "mp.weixin.qq.com", "/s/article-id", query))
+	if got == nil {
+		t.Fatal("complete article request returned nil")
+	}
+	if got.AppmsgToken != "" {
+		t.Fatal("legacy article request unexpectedly expanded captured fields")
+	}
+}
+
 func TestOfficialAccountClientStoresCapturedCredential(t *testing.T) {
 	old_path := mp_json_filepath
 	acct_mu.Lock()
